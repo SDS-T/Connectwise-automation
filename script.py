@@ -80,14 +80,28 @@ def all_open_tkts():
         "$RMM Alerts (MS)",
         "$TAM"
     ]
+    owners = [
+        "Prashant Tayade",
+        "Shivaji Gupta",
+        "Siddhesh Tawde",
+        "Nagendra Rao",
+        "Laxman Vengurlekar",
+        "Devram Washivale",
+        "Vikas Bhadvalkar",
+        "Vinith Devraj",
+        "Shubham Mishra",
+        "Shreyash Ghadage",
+        "Indra Singha",
+        "Gaurav Dalvi"
+    ]
 
     board_filter = " OR ".join([f"board/name='{b}'" for b in boards])
- 
+    owner_filter = " OR ".join([f"owner/name='{o}'" for o in owners])
     while True:
         print(f"\nFetching page {page}...")
  
-        endpoint = f"{cw_base_url}/service/tickets?conditions=(({board_filter}) AND dateEntered >= '{lastrun_api}')&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
- 
+        # endpoint = f"{cw_base_url}/service/tickets?conditions=(({board_filter}) AND dateEntered >= '{lastrun_api}')&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
+        endpoint = f"{cw_base_url}/service/tickets?conditions=((({board_filter}) AND ({owner_filter})) AND dateEntered >= '{lastrun_api}')&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
         response = session.get(endpoint, headers=headers)
  
         if response.status_code != 200:
