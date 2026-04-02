@@ -55,14 +55,32 @@ def all_open_tkts():
     total_open_tkt = []
     page = 1
     page_size = 1000
- 
     boards = [
-        "$Inspiroz Implementation (MS)",
-        "$Inspiroz HelpDesk (MS)",
         "$ACS HelpDesk (MS)",
-        "$ACS Implementation (MS)"
+        "$ACS Implementation (MS)",
+        "$ACS Implementation (PS)",
+        "$ACS Procurement",
+        "$ACS Quotes",
+        "$ACS Recurring (MS)",
+        "$ACS Sales",
+        "$ACS Threat Detection",
+        "$ACS Triage",
+        "$Backup (MS)",
+        "$Inspiroz Helpdesk (MS)",
+        "$Inspiroz Implementation (MS)",
+        "$Inspiroz Implementation (PS)",
+        "$Inspiroz Procurement",
+        "$Inspiroz Quotes",
+        "$Inspiroz Recurring (MS)",
+        "$Inspiroz Sales",
+        "$Inspiroz Threat Detection",
+        "$Inspiroz Triage",
+        "$Internal",
+        "$Re-Opened",
+        "$RMM Alerts (MS)",
+        "$TAM"
     ]
- 
+
     board_filter = " OR ".join([f"board/name='{b}'" for b in boards])
  
     while True:
