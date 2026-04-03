@@ -135,21 +135,27 @@ print(f"\nTotal records: {len(output)}")
 # ================================
 csv_path = "tickets.csv"
  
+csv_path = "tickets.csv"
+
 if len(output) > 0:
     df = pd.json_normalize(output)
- 
+
     # Timezone conversion
     df['_info.dateEntered'] = pd.to_datetime(df['_info.dateEntered'], utc=True)
     df['_info.dateEntered'] = df['_info.dateEntered'].dt.tz_convert('US/Eastern')
- 
+
     if os.path.exists(csv_path):
-        existing_df = pd.read_csv(csv_path)
- 
-        df = pd.concat([existing_df, df])
-        df = df.drop_duplicates(subset=['id'])
- 
+        try:
+            existing_df = pd.read_csv(csv_path)
+
+            df = pd.concat([existing_df, df])
+            df = df.drop_duplicates(subset=['id'])
+
+        except pd.errors.EmptyDataError:
+            print("CSV is empty, treating as new file")
+
     df.to_csv(csv_path, index=False)
     print("CSV updated successfully")
- 
+
 else:
     print("No new data")
