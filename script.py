@@ -110,10 +110,7 @@ def all_open_tkts():
             break
  
         data = response.json()
- 
-        if not isinstance(data, list):
-            print("Unexpected response:", data)
-            break
+
  
         count = len(data)
         print(f"Page {page} returned {count} records")
