@@ -101,7 +101,7 @@ def all_open_tkts():
         print(f"\nFetching page {page}...")
  
         # endpoint = f"{cw_base_url}/service/tickets?conditions=(({board_filter}) AND dateEntered >= '{lastrun_api}')&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
-        endpoint = f"{cw_base_url}/service/tickets?conditions=((({board_filter}) AND ({owner_filter})) AND dateEntered >= '{lastrun_api}')&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
+        endpoint = f"{cw_base_url}/service/tickets?conditions=(({board_filter}) AND ({owner_filter})) AND dateEntered >= [{lastrun_api}]&page={page}&pagesize={page_size}"
         response = session.get(endpoint, headers=headers)
  
         if response.status_code != 200:
