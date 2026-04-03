@@ -2,7 +2,7 @@ import requests
 import base64
 import pandas as pd
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta,timezone
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
  
@@ -42,8 +42,9 @@ def create_session():
 # ================================
 # TIME (LAST 30 MINUTES)
 # ================================
-#lastrun_dt = datetime.utcnow() - timedelta(minutes=30)
-lastrun_api = "2025-01-01 00:00:00.000000"
+# lastrun_dt = datetime.now(timezone.utc) - timedelta(minutes=30)
+# lastrun_api = lastrun_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+lastrun_api = "2026-01-01 00:00:00.000000"
  
 print("Fetching data from:", lastrun_api)
  
