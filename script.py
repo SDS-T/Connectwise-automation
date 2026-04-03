@@ -133,7 +133,7 @@ print(f"\nTotal records: {len(output)}")
 # ================================
 # SAVE (APPEND MODE)
 # ================================
-csv_path = "tickets_new.csv"
+csv_path = "tickets.csv"
  
 if len(output) > 0:
     df = pd.json_normalize(output)
