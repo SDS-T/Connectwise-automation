@@ -78,7 +78,7 @@ def all_open_tkts():
         "$Inspiroz Triage",
         "$Internal",
         "$Re-Opened",
-        "$RMM Alerts (MS)",
+        "$RMM Alerts ( MS )",
         "$TAM"
     ]
     owners = [
