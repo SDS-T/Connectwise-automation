@@ -2,160 +2,136 @@ import requests
 import base64
 import pandas as pd
 import os
-from datetime import datetime, timedelta,timezone
+from datetime import datetime, timedelta, timezone
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
- 
+
 # ================================
-# ENV VARIABLES (from GitHub Secrets)
+# ENV VARIABLES
 # ================================
 cw_base_url = os.getenv("CW_BASE_URL")
 public_key = os.getenv("CW_PUBLIC_KEY")
 private_key = os.getenv("CW_PRIVATE_KEY")
 clientid = os.getenv("CW_CLIENT_ID")
- 
+
 # ================================
 # AUTH
 # ================================
 credentials = base64.b64encode(
     f"acs+{public_key}:{private_key}".encode()
 ).decode()
- 
+
 headers = {
     "Authorization": f"Basic {credentials}",
     "Accept": "application/vnd.connectwise.com+json; version=2022.1",
-    "clientid": clientid,
-    "Connection": "keep-alive"
+    "clientid": clientid
 }
- 
+
 # ================================
-# SESSION
+# SESSION WITH RETRY
 # ================================
 def create_session():
     session = requests.Session()
-    retry = Retry(total=3, backoff_factor=0.5)
+    retry = Retry(total=3, backoff_factor=1)
     adapter = HTTPAdapter(max_retries=retry)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
+    session.mount("https://", adapter)
     return session
- 
+
 # ================================
-# TIME (LAST 30 MINUTES)
+# GET LAST RUN TIME
 # ================================
-lastrun_dt = datetime.now(timezone.utc) - timedelta(minutes=30)
-lastrun_api = lastrun_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-#lastrun_api = "2026-01-01 00:00:00.000000"
- 
-print("Fetching data from:", lastrun_api)
- 
+def get_last_run_time():
+    if os.path.exists("last_run.txt"):
+        with open("last_run.txt", "r") as f:
+            return f.read().strip()
+    else:
+        return "2026-01-01T00:00:00Z"   # FIRST RUN
+
+# ================================
+# SAVE LAST RUN TIME
+# ================================
+def save_last_run_time():
+    with open("last_run.txt", "w") as f:
+        f.write(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+
 # ================================
 # FETCH DATA
 # ================================
-def all_open_tkts():
+def fetch_tickets(last_run):
     session = create_session()
-    total_open_tkt = []
+    all_data = []
     page = 1
     page_size = 1000
-    boards = [
-        "$ACS HelpDesk (MS)",
-        "$ACS Implementation (MS)",
-        "$ACS Implementation (PS)",
-        "$ACS Procurement",
-        "$ACS Quotes",
-        "$ACS Recurring (MS)",
-        "$ACS Sales",
-        "$ACS Threat Detection",
-        "$ACS Triage",
-        "$Backup (MS)",
-        "$Inspiroz Helpdesk (MS)",
-        "$Inspiroz Implementation (MS)",
-        "$Inspiroz Implementation (PS)",
-        "$Inspiroz Procurement",
-        "$Inspiroz Quotes",
-        "$Inspiroz Recurring (MS)",
-        "$Inspiroz Sales",
-        "$Inspiroz Threat Detection",
-        "$Inspiroz Triage",
-        "$Internal",
-        "$Re-Opened",
-        "$RMM Alerts ( MS )",
-        "$TAM"
-    ]
-    owners = [
-        "Prashant Tayade",
-        "Shivaji Gupta",
-        "Siddhesh Tawde",
-        "Nagendra Rao",
-        "Laxman Vengurlekar",
-        "Devram Washivale",
-        "Vikas Bhadvalkar",
-        "Vinith Devraj",
-        "Shubham Mishra",
-        "Shreyash Ghadage",
-        "Indra Singha",
-        "Gaurav Dalvi"
-    ]
+
+    boards = ["$ACS HelpDesk (MS)", "$ACS Implementation (MS)", "$ACS Procurement"]
+    owners = ["Prashant Tayade", "Shivaji Gupta"]
 
     board_filter = " OR ".join([f"board/name='{b}'" for b in boards])
     owner_filter = " OR ".join([f"owner/name='{o}'" for o in owners])
+
     while True:
-        print(f"\nFetching page {page}...")
- 
-        # endpoint = f"{cw_base_url}/service/tickets?conditions=(({board_filter}) AND dateEntered >= '{lastrun_api}')&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
-        endpoint = f"{cw_base_url}/service/tickets?conditions=(({board_filter}) AND ({owner_filter})) AND dateEntered >= [{lastrun_api}]&page={page}&pagesize={page_size}"
+        print(f"Fetching page {page}...")
+
+        endpoint = (
+            f"{cw_base_url}/service/tickets?"
+            f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '{last_run}')"
+            f"&page={page}&pagesize={page_size}"
+        )
+
         response = session.get(endpoint, headers=headers)
- 
+
         if response.status_code != 200:
-            print(f"API Error {response.status_code}: {response.text}")
+            print("API Error:", response.text)
             break
- 
+
         data = response.json()
+        print(f"Records fetched: {len(data)}")
 
- 
-        count = len(data)
-        print(f"Page {page} returned {count} records")
- 
-        total_open_tkt.extend(data)
- 
-        if count < page_size:
+        if not data:
             break
- 
+
+        all_data.extend(data)
+
+        if len(data) < page_size:
+            break
+
         page += 1
- 
-    return total_open_tkt
- 
+
+    return all_data
+
 # ================================
-# EXECUTION
+# MAIN EXECUTION
 # ================================
-output = all_open_tkts()
-print(f"\nTotal records: {len(output)}")
- 
-# ================================
-# SAVE (APPEND MODE)
-# ================================
-csv_path = "tickets.csv"
- 
+last_run_time = get_last_run_time()
+print("Last run time:", last_run_time)
+
+tickets = fetch_tickets(last_run_time)
+print("Total new records:", len(tickets))
+
 csv_path = "tickets.csv"
 
-if len(output) > 0:
-    df = pd.json_normalize(output)
+if tickets:
+    df = pd.json_normalize(tickets)
 
-    # Timezone conversion
-    df['_info.dateEntered'] = pd.to_datetime(df['_info.dateEntered'], utc=True)
-    df['_info.dateEntered'] = df['_info.dateEntered'].dt.tz_convert('US/Eastern')
+    # Convert time
+    if "_info.dateEntered" in df.columns:
+        df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
+        df["_info.dateEntered"] = df["_info.dateEntered"].dt.tz_convert("US/Eastern")
 
+    # Append to existing
     if os.path.exists(csv_path):
         try:
             existing_df = pd.read_csv(csv_path)
-
-            df = pd.concat([existing_df, df])
-            df = df.drop_duplicates(subset=['id'])
-
+            df = pd.concat([existing_df, df], ignore_index=True)
+            df.drop_duplicates(subset=["id"], inplace=True)
         except pd.errors.EmptyDataError:
-            print("CSV is empty, treating as new file")
+            print("Empty CSV, writing new file")
 
     df.to_csv(csv_path, index=False)
-    print("CSV updated successfully")
+    print("CSV updated")
+
+    # Save last run only if success
+    save_last_run_time()
 
 else:
     print("No new data")
