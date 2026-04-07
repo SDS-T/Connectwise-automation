@@ -2,12 +2,12 @@ import requests
 import base64
 import pandas as pd
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ================================
-# ENV VARIABLES
+# ENV VARIABLES (GitHub Secrets)
 # ================================
 cw_base_url = os.getenv("CW_BASE_URL")
 public_key = os.getenv("CW_PUBLIC_KEY")
@@ -38,18 +38,15 @@ def create_session():
     return session
 
 # ================================
-# GET LAST RUN TIME
+# LAST RUN LOGIC
 # ================================
 def get_last_run_time():
     if os.path.exists("last_run.txt"):
         with open("last_run.txt", "r") as f:
-            return f.read().strip()
+            return f.read().strip(), False
     else:
-        return "2026-01-01T00:00:00Z"   # FIRST RUN
+        return None, True   # First run
 
-# ================================
-# SAVE LAST RUN TIME
-# ================================
 def save_last_run_time():
     with open("last_run.txt", "w") as f:
         f.write(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
@@ -57,26 +54,51 @@ def save_last_run_time():
 # ================================
 # FETCH DATA
 # ================================
-def fetch_tickets(last_run):
+def fetch_tickets(last_run, is_first_run):
     session = create_session()
     all_data = []
     page = 1
     page_size = 1000
 
-    boards = ["$ACS HelpDesk (MS)", "$ACS Implementation (MS)", "$ACS Procurement"]
-    owners = ["Prashant Tayade", "Shivaji Gupta"]
+    # ✅ ALL BOARDS
+    boards = [
+        "$ACS HelpDesk (MS)", "$ACS Implementation (MS)", "$ACS Implementation (PS)",
+        "$ACS Procurement", "$ACS Quotes", "$ACS Recurring (MS)", "$ACS Sales",
+        "$ACS Threat Detection", "$ACS Triage", "$Backup (MS)",
+        "$Inspiroz Helpdesk (MS)", "$Inspiroz Implementation (MS)", "$Inspiroz Implementation (PS)",
+        "$Inspiroz Procurement", "$Inspiroz Quotes", "$Inspiroz Recurring (MS)",
+        "$Inspiroz Sales", "$Inspiroz Threat Detection", "$Inspiroz Triage",
+        "$Internal", "$Re-Opened", "$RMM Alerts (MS)", "$TAM"
+    ]
+
+    # ✅ OWNERS
+    owners = [
+        "Prashant Tayade", "Shivaji Gupta", "Siddhesh Tawde",
+        "Nagendra Rao", "Laxman Vengurlekar", "Devram Washivale",
+        "Vikas Bhadvalkar", "Vinith Devraj", "Shubham Mishra",
+        "Shreyash Ghadage", "Indra Singha", "Gaurav Dalvi"
+    ]
 
     board_filter = " OR ".join([f"board/name='{b}'" for b in boards])
     owner_filter = " OR ".join([f"owner/name='{o}'" for o in owners])
 
     while True:
-        print(f"Fetching page {page}...")
+        print(f"\nFetching page {page}...")
 
-        endpoint = (
-            f"{cw_base_url}/service/tickets?"
-            f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '{last_run}')"
-            f"&page={page}&pagesize={page_size}"
-        )
+        if is_first_run:
+            # 🔥 FULL LOAD
+            endpoint = (
+                f"{cw_base_url}/service/tickets?"
+                f"conditions=(({board_filter}) AND ({owner_filter}))"
+                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
+            )
+        else:
+            # 🔄 INCREMENTAL LOAD
+            endpoint = (
+                f"{cw_base_url}/service/tickets?"
+                f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '{last_run}')"
+                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
+            )
 
         response = session.get(endpoint, headers=headers)
 
@@ -100,37 +122,38 @@ def fetch_tickets(last_run):
     return all_data
 
 # ================================
-# MAIN EXECUTION
+# MAIN
 # ================================
-last_run_time = get_last_run_time()
-print("Last run time:", last_run_time)
+last_run_time, is_first_run = get_last_run_time()
 
-tickets = fetch_tickets(last_run_time)
-print("Total new records:", len(tickets))
+print("Last run:", last_run_time)
+print("First run:", is_first_run)
+
+tickets = fetch_tickets(last_run_time, is_first_run)
+print("Total records fetched:", len(tickets))
 
 csv_path = "tickets.csv"
 
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # Convert time
+    # Time conversion
     if "_info.dateEntered" in df.columns:
         df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
         df["_info.dateEntered"] = df["_info.dateEntered"].dt.tz_convert("US/Eastern")
 
-    # Append to existing
+    # Append + dedupe
     if os.path.exists(csv_path):
         try:
             existing_df = pd.read_csv(csv_path)
             df = pd.concat([existing_df, df], ignore_index=True)
             df.drop_duplicates(subset=["id"], inplace=True)
-        except pd.errors.EmptyDataError:
-            print("Empty CSV, writing new file")
+        except:
+            print("Fresh write")
 
     df.to_csv(csv_path, index=False)
-    print("CSV updated")
+    print("CSV updated successfully")
 
-    # Save last run only if success
     save_last_run_time()
 
 else:
