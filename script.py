@@ -42,9 +42,9 @@ def create_session():
 # ================================
 # TIME (LAST 30 MINUTES)
 # ================================
-# lastrun_dt = datetime.now(timezone.utc) - timedelta(minutes=30)
-# lastrun_api = lastrun_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-lastrun_api = "2026-01-01 00:00:00.000000"
+lastrun_dt = datetime.now(timezone.utc) - timedelta(minutes=30)
+lastrun_api = lastrun_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+#lastrun_api = "2026-01-01 00:00:00.000000"
  
 print("Fetching data from:", lastrun_api)
  
