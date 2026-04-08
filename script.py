@@ -137,6 +137,7 @@ if tickets:
     if "_info.dateEntered" in df.columns:
         df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
         df["_info.dateEntered"] = df["_info.dateEntered"].dt.tz_convert("US/Eastern")
+        df["_info.dateEntered"] = df["_info.dateEntered"].dt.strftime("%m-%d-%Y %H:%M")
 
     # ✅ Append + dedupe (FIXED)
     if os.path.exists(csv_path):
