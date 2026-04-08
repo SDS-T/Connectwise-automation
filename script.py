@@ -60,7 +60,6 @@ def fetch_tickets(last_run, is_first_run):
     page = 1
     page_size = 1000
 
-    # ✅ ALL BOARDS
     boards = [
         "$ACS HelpDesk (MS)", "$ACS Implementation (MS)", "$ACS Implementation (PS)",
         "$ACS Procurement", "$ACS Quotes", "$ACS Recurring (MS)", "$ACS Sales",
@@ -71,7 +70,6 @@ def fetch_tickets(last_run, is_first_run):
         "$Internal", "$Re-Opened", "$RMM Alerts (MS)", "$TAM"
     ]
 
-    # ✅ OWNERS
     owners = [
         "Prashant Tayade", "Shivaji Gupta", "Siddhesh Tawde",
         "Nagendra Rao", "Laxman Vengurlekar", "Devram Washivale",
@@ -86,14 +84,12 @@ def fetch_tickets(last_run, is_first_run):
         print(f"\nFetching page {page}...")
 
         if is_first_run:
-            # 🔥 FULL LOAD
             endpoint = (
                 f"{cw_base_url}/service/tickets?"
                 f"conditions=(({board_filter}) AND ({owner_filter}))"
                 f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
             )
         else:
-            # 🔄 INCREMENTAL LOAD
             endpoint = (
                 f"{cw_base_url}/service/tickets?"
                 f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '{last_run}')"
@@ -103,7 +99,7 @@ def fetch_tickets(last_run, is_first_run):
         response = session.get(endpoint, headers=headers)
 
         if response.status_code != 200:
-            print("API Error:", response.text)
+            print(f"API Error {response.status_code}: {response.text}")
             break
 
         data = response.json()
@@ -122,7 +118,7 @@ def fetch_tickets(last_run, is_first_run):
     return all_data
 
 # ================================
-# MAIN
+# MAIN EXECUTION
 # ================================
 last_run_time, is_first_run = get_last_run_time()
 
@@ -137,24 +133,33 @@ csv_path = "tickets.csv"
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # Time conversion
+    # ✅ Time conversion
     if "_info.dateEntered" in df.columns:
         df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
         df["_info.dateEntered"] = df["_info.dateEntered"].dt.tz_convert("US/Eastern")
 
-    # Append + dedupe
+    # ✅ Append + dedupe (FIXED)
     if os.path.exists(csv_path):
         try:
             existing_df = pd.read_csv(csv_path)
             df = pd.concat([existing_df, df], ignore_index=True)
             df.drop_duplicates(subset=["id"], inplace=True)
-        except:
-            print("Fresh write")
+            print("Merged with existing CSV")
+        except Exception as e:
+            print(f"WARNING: Could not merge existing CSV: {e}")
+            print("Proceeding with fresh data only")
 
-    df.to_csv(csv_path, index=False)
-    print("CSV updated successfully")
+    # ✅ Safe CSV write (CRITICAL FIX)
+    try:
+        df.to_csv(csv_path, index=False)
+        print(f"✅ CSV updated successfully with {len(df)} total records")
 
-    save_last_run_time()
+        # Save last run ONLY after success
+        save_last_run_time()
+
+    except Exception as e:
+        print(f"❌ ERROR writing CSV: {e}")
+        exit(1)
 
 else:
-    print("No new data")
+    print("No new data fetched")
