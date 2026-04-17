@@ -45,7 +45,7 @@ def get_last_run_time():
         with open("last_run.txt", "r") as f:
             return f.read().strip(), False
     else:
-        return None, True   # First run
+        return None, True
 
 def save_last_run_time():
     with open("last_run.txt", "w") as f:
@@ -133,13 +133,39 @@ csv_path = "tickets.csv"
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # ✅ Time conversion
+    # ================================
+    # ✅ FIXED TIME HANDLING
+    # ================================
     if "_info.dateEntered" in df.columns:
-        df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
-        df["_info.dateEntered"] = df["_info.dateEntered"].dt.tz_convert("US/Eastern")
-        df["_info.dateEntered"] = df["_info.dateEntered"].dt.strftime("%m-%d-%Y %H:%M")
 
-    # ✅ Append + dedupe (FIXED)
+        # Parse API UTC
+        df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
+
+        # 1️⃣ API FORMAT (-05:00 style)
+        df["dateEntered_api_format"] = df["_info.dateEntered"].dt.tz_convert("US/Eastern")
+        df["dateEntered_api_format"] = df["dateEntered_api_format"].dt.strftime("%Y-%m-%d %H:%M:%S%z")
+
+        df["dateEntered_api_format"] = df["dateEntered_api_format"].str.replace(
+            r"(\+|\-)(\d{2})(\d{2})$", r"\1\2:\3", regex=True
+        )
+
+        # 2️⃣ UI FORMAT (IST style)
+        df["dateEntered_ui_format"] = df["_info.dateEntered"].dt.tz_convert("Asia/Kolkata")
+
+        try:
+            df["dateEntered_ui_format"] = df["dateEntered_ui_format"].dt.strftime(
+                "%a %-m/%-d/%y %-I:%M %p"
+            )
+        except:
+            df["dateEntered_ui_format"] = df["dateEntered_ui_format"].dt.strftime(
+                "%a %m/%d/%y %I:%M %p"
+            )
+
+        df["dateEntered_ui_format"] = df["dateEntered_ui_format"] + " UTC+05:30"
+
+    # ================================
+    # MERGE + DEDUPE
+    # ================================
     if os.path.exists(csv_path):
         try:
             existing_df = pd.read_csv(csv_path)
@@ -150,14 +176,13 @@ if tickets:
             print(f"WARNING: Could not merge existing CSV: {e}")
             print("Proceeding with fresh data only")
 
-    # ✅ Safe CSV write (CRITICAL FIX)
+    # ================================
+    # SAVE CSV
+    # ================================
     try:
         df.to_csv(csv_path, index=False)
         print(f"✅ CSV updated successfully with {len(df)} total records")
-
-        # Save last run ONLY after success
         save_last_run_time()
-
     except Exception as e:
         print(f"❌ ERROR writing CSV: {e}")
         exit(1)
