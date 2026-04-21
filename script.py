@@ -92,7 +92,7 @@ def fetch_tickets(last_run, is_first_run):
         else:
             endpoint = (
                 f"{cw_base_url}/service/tickets?"
-                f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '{last_run}')"
+                f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered > '{last_run}')"
                 f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
             )
 
@@ -133,35 +133,7 @@ csv_path = "tickets.csv"
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # ================================
-    # ✅ FIXED TIME HANDLING
-    # ================================
-    if "_info.dateEntered" in df.columns:
-
-        # Parse API UTC
-        df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
-
-        # 1️⃣ API FORMAT (-05:00 style)
-        df["dateEntered_api_format"] = df["_info.dateEntered"].dt.tz_convert("US/Eastern")
-        df["dateEntered_api_format"] = df["dateEntered_api_format"].dt.strftime("%Y-%m-%d %H:%M:%S%z")
-
-        df["dateEntered_api_format"] = df["dateEntered_api_format"].str.replace(
-            r"(\+|\-)(\d{2})(\d{2})$", r"\1\2:\3", regex=True
-        )
-
-        # 2️⃣ UI FORMAT (IST style)
-        df["dateEntered_ui_format"] = df["_info.dateEntered"].dt.tz_convert("Asia/Kolkata")
-
-        try:
-            df["dateEntered_ui_format"] = df["dateEntered_ui_format"].dt.strftime(
-                "%a %-m/%-d/%y %-I:%M %p"
-            )
-        except:
-            df["dateEntered_ui_format"] = df["dateEntered_ui_format"].dt.strftime(
-                "%a %m/%d/%y %I:%M %p"
-            )
-
-        df["dateEntered_ui_format"] = df["dateEntered_ui_format"] + " UTC+05:30"
+    # ❌ NO TIME CONVERSION — keep raw API values
 
     # ================================
     # MERGE + DEDUPE
