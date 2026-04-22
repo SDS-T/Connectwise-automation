@@ -66,17 +66,18 @@ def fetch_tickets(last_run, is_first_run):
         else:
             endpoint = (
                 f"{cw_base_url}/service/tickets?"
-                f"conditions=dateEntered > [{last_run}]"
+                f"conditions=dateEntered > '{last_run}'"
                 f"&page={page}&pagesize={page_size}"
             )
 
         res = session.get(endpoint, headers=headers)
 
         if res.status_code != 200:
-            print(res.text)
+            print("API Error:", res.status_code, res.text)
             break
 
         data = res.json()
+
         if not data:
             break
 
@@ -90,35 +91,71 @@ def fetch_tickets(last_run, is_first_run):
     return all_data
 
 # ================================
-# 🔥 FIX FUNCTION (CORE LOGIC)
+# 🔥 STRICT DATETIME PARSER
 # ================================
-def fix_datetime_column(series):
-    series = series.astype(str)
+def strict_datetime_parser(series):
+    parsed_dates = []
+    failed_rows = []
 
-    # Identify ISO rows (have timezone info)
-    iso_mask = series.str.contains(r'Z|\\+\\d{2}:\\d{2}', na=False)
+    for idx, val in series.items():
+        try:
+            raw = str(val).strip()
 
-    # Parse ISO → UTC → IST
-    iso_parsed = pd.to_datetime(series[iso_mask], utc=True, errors='coerce')
-    iso_parsed = iso_parsed.dt.tz_convert('Asia/Kolkata')
+            if raw == "" or raw.lower() == "nan":
+                parsed_dates.append("")
+                failed_rows.append((idx, raw, "EMPTY"))
+                continue
 
-    # Parse non-ISO → assume IST
-    non_iso_parsed = pd.to_datetime(
-        series[~iso_mask],
-        format='%m-%d-%Y %H:%M',
-        errors='coerce'
-    ).dt.tz_localize('Asia/Kolkata')
+            # ISO / UTC format
+            if "T" in raw or "+" in raw or "Z" in raw:
+                dt = pd.to_datetime(raw, utc=True, errors='coerce')
 
-    # Combine back
-    final = pd.concat([iso_parsed, non_iso_parsed]).sort_index()
+                if pd.isna(dt):
+                    parsed_dates.append(raw)
+                    failed_rows.append((idx, raw, "ISO_PARSE_FAIL"))
+                    continue
 
-    # Format EXACT like ConnectWise UI
-    return final.dt.strftime('%m-%d-%Y %H:%M')
+                dt = dt.tz_convert('Asia/Kolkata')
+                parsed_dates.append(dt.strftime('%m-%d-%Y %H:%M'))
+                continue
+
+            # MM-DD-YYYY HH:MM
+            try:
+                dt = pd.to_datetime(raw, format='%m-%d-%Y %H:%M', errors='raise')
+                dt = dt.tz_localize('Asia/Kolkata')
+                parsed_dates.append(dt.strftime('%m-%d-%Y %H:%M'))
+                continue
+            except:
+                pass
+
+            # Fallback
+            dt = pd.to_datetime(raw, errors='coerce')
+
+            if pd.isna(dt):
+                parsed_dates.append(raw)
+                failed_rows.append((idx, raw, "UNKNOWN_FORMAT"))
+                continue
+
+            dt = dt.tz_localize('UTC').tz_convert('Asia/Kolkata')
+            parsed_dates.append(dt.strftime('%m-%d-%Y %H:%M'))
+
+        except Exception as e:
+            parsed_dates.append(str(val))
+            failed_rows.append((idx, val, str(e)))
+
+    # Save debug file
+    if failed_rows:
+        debug_df = pd.DataFrame(failed_rows, columns=["index", "raw_value", "error"])
+        debug_df.to_csv("datetime_parse_errors.csv", index=False)
+        print(f"⚠️ {len(failed_rows)} rows had parsing issues (see datetime_parse_errors.csv)")
+
+    return pd.Series(parsed_dates)
 
 # ================================
 # MAIN
 # ================================
 last_run_time, is_first_run = get_last_run_time()
+
 tickets = fetch_tickets(last_run_time, is_first_run)
 
 csv_path = "tickets.csv"
@@ -126,23 +163,28 @@ csv_path = "tickets.csv"
 if tickets:
     df = pd.json_normalize(tickets)
 
+    # Apply strict parser
     if '_info.dateEntered' in df.columns:
-        df['_info.dateEntered'] = fix_datetime_column(df['_info.dateEntered'])
+        df['_info.dateEntered'] = strict_datetime_parser(df['_info.dateEntered'])
 
-    # Merge old CSV safely
+    # Merge existing CSV
     if os.path.exists(csv_path):
-        existing_df = pd.read_csv(csv_path)
+        try:
+            existing_df = pd.read_csv(csv_path)
 
-        if '_info.dateEntered' in existing_df.columns:
-            existing_df['_info.dateEntered'] = fix_datetime_column(existing_df['_info.dateEntered'])
+            if '_info.dateEntered' in existing_df.columns:
+                existing_df['_info.dateEntered'] = strict_datetime_parser(existing_df['_info.dateEntered'])
 
-        df = pd.concat([existing_df, df], ignore_index=True)
-        df.drop_duplicates(subset=["id"], keep="last", inplace=True)
+            df = pd.concat([existing_df, df], ignore_index=True)
+            df.drop_duplicates(subset=["id"], keep="last", inplace=True)
+
+        except Exception as e:
+            print("Merge warning:", e)
 
     df.to_csv(csv_path, index=False)
     save_last_run_time()
 
-    print("✅ CSV FIXED — All timestamps now match ConnectWise UI (IST)")
+    print("✅ SUCCESS: CSV updated with correct IST timestamps")
 
 else:
     print("No data fetched")
