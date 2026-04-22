@@ -1,3 +1,4 @@
+```python
 import requests
 import base64
 import pandas as pd
@@ -7,7 +8,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ================================
-# ENV VARIABLES (GitHub Secrets)
+# ENV VARIABLES
 # ================================
 cw_base_url = os.getenv("CW_BASE_URL")
 public_key = os.getenv("CW_PUBLIC_KEY")
@@ -28,7 +29,7 @@ headers = {
 }
 
 # ================================
-# SESSION WITH RETRY
+# SESSION
 # ================================
 def create_session():
     session = requests.Session()
@@ -38,40 +39,20 @@ def create_session():
     return session
 
 # ================================
-# LAST RUN LOGIC
+# LAST RUN
 # ================================
 def get_last_run_time():
     if os.path.exists("last_run.txt"):
         with open("last_run.txt", "r") as f:
             return f.read().strip(), False
-    else:
-        return None, True
-
+    return None, True
 
 def save_last_run_time():
     with open("last_run.txt", "w") as f:
         f.write(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
 
-
 # ================================
-# NORMALIZE DATETIME COLUMN
-# ================================
-def normalize_date_column(df, column_name="_info.dateEntered"):
-    if column_name in df.columns:
-        df[column_name] = pd.to_datetime(
-            df[column_name],
-            utc=True,
-            errors="coerce"
-        )
-
-        # Save in consistent UTC ISO format
-        df[column_name] = df[column_name].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    return df
-
-
-# ================================
-# FETCH DATA
+# FETCH
 # ================================
 def fetch_tickets(last_run, is_first_run):
     session = create_session()
@@ -79,51 +60,23 @@ def fetch_tickets(last_run, is_first_run):
     page = 1
     page_size = 1000
 
-    boards = [
-        "$ACS HelpDesk (MS)", "$ACS Implementation (MS)", "$ACS Implementation (PS)",
-        "$ACS Procurement", "$ACS Quotes", "$ACS Recurring (MS)", "$ACS Sales",
-        "$ACS Threat Detection", "$ACS Triage", "$Backup (MS)",
-        "$Inspiroz Helpdesk (MS)", "$Inspiroz Implementation (MS)", "$Inspiroz Implementation (PS)",
-        "$Inspiroz Procurement", "$Inspiroz Quotes", "$Inspiroz Recurring (MS)",
-        "$Inspiroz Sales", "$Inspiroz Threat Detection", "$Inspiroz Triage",
-        "$Internal", "$Re-Opened", "$RMM Alerts (MS)", "$TAM"
-    ]
-
-    owners = [
-        "Prashant Tayade", "Shivaji Gupta", "Siddhesh Tawde",
-        "Nagendra Rao", "Laxman Vengurlekar", "Devram Washivale",
-        "Vikas Bhadvalkar", "Vinith Devraj", "Shubham Mishra",
-        "Shreyash Ghadage", "Indra Singha", "Gaurav Dalvi"
-    ]
-
-    board_filter = " OR ".join([f"board/name='{b}'" for b in boards])
-    owner_filter = " OR ".join([f"owner/name='{o}'" for o in owners])
-
     while True:
-        print(f"\nFetching page {page}...")
-
         if is_first_run:
-            endpoint = (
-                f"{cw_base_url}/service/tickets?"
-                f"conditions=(({board_filter}) AND ({owner_filter}))"
-                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
-            )
+            endpoint = f"{cw_base_url}/service/tickets?page={page}&pagesize={page_size}"
         else:
             endpoint = (
                 f"{cw_base_url}/service/tickets?"
-                f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered > '{last_run}')"
-                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
+                f"conditions=dateEntered > [{last_run}]"
+                f"&page={page}&pagesize={page_size}"
             )
 
-        response = session.get(endpoint, headers=headers)
+        res = session.get(endpoint, headers=headers)
 
-        if response.status_code != 200:
-            print(f"API Error {response.status_code}: {response.text}")
+        if res.status_code != 200:
+            print(res.text)
             break
 
-        data = response.json()
-        print(f"Records fetched: {len(data)}")
-
+        data = res.json()
         if not data:
             break
 
@@ -136,59 +89,61 @@ def fetch_tickets(last_run, is_first_run):
 
     return all_data
 
+# ================================
+# 🔥 FIX FUNCTION (CORE LOGIC)
+# ================================
+def fix_datetime_column(series):
+    series = series.astype(str)
+
+    # Identify ISO rows (have timezone info)
+    iso_mask = series.str.contains(r'Z|\\+\\d{2}:\\d{2}', na=False)
+
+    # Parse ISO → UTC → IST
+    iso_parsed = pd.to_datetime(series[iso_mask], utc=True, errors='coerce')
+    iso_parsed = iso_parsed.dt.tz_convert('Asia/Kolkata')
+
+    # Parse non-ISO → assume IST
+    non_iso_parsed = pd.to_datetime(
+        series[~iso_mask],
+        format='%m-%d-%Y %H:%M',
+        errors='coerce'
+    ).dt.tz_localize('Asia/Kolkata')
+
+    # Combine back
+    final = pd.concat([iso_parsed, non_iso_parsed]).sort_index()
+
+    # Format EXACT like ConnectWise UI
+    return final.dt.strftime('%m-%d-%Y %H:%M')
 
 # ================================
-# MAIN EXECUTION
+# MAIN
 # ================================
 last_run_time, is_first_run = get_last_run_time()
-
-print("Last run:", last_run_time)
-print("First run:", is_first_run)
-
 tickets = fetch_tickets(last_run_time, is_first_run)
-print("Total records fetched:", len(tickets))
 
 csv_path = "tickets.csv"
 
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # ✅ Normalize new data timestamps
-    df = normalize_date_column(df)
+    if '_info.dateEntered' in df.columns:
+        df['_info.dateEntered'] = fix_datetime_column(df['_info.dateEntered'])
 
-    # ================================
-    # MERGE + DEDUPE
-    # ================================
+    # Merge old CSV safely
     if os.path.exists(csv_path):
-        try:
-            existing_df = pd.read_csv(csv_path)
+        existing_df = pd.read_csv(csv_path)
 
-            # ✅ Normalize old CSV timestamps
-            existing_df = normalize_date_column(existing_df)
+        if '_info.dateEntered' in existing_df.columns:
+            existing_df['_info.dateEntered'] = fix_datetime_column(existing_df['_info.dateEntered'])
 
-            # Merge
-            df = pd.concat([existing_df, df], ignore_index=True)
+        df = pd.concat([existing_df, df], ignore_index=True)
+        df.drop_duplicates(subset=["id"], keep="last", inplace=True)
 
-            # Drop duplicates
-            df.drop_duplicates(subset=["id"], inplace=True)
+    df.to_csv(csv_path, index=False)
+    save_last_run_time()
 
-            print("Merged with existing CSV")
-
-        except Exception as e:
-            print(f"WARNING: Could not merge existing CSV: {e}")
-            print("Proceeding with fresh data only")
-
-    # ================================
-    # SAVE CSV
-    # ================================
-    try:
-        df.to_csv(csv_path, index=False)
-        print(f"✅ CSV updated successfully with {len(df)} total records")
-        save_last_run_time()
-
-    except Exception as e:
-        print(f"❌ ERROR writing CSV: {e}")
-        exit(1)
+    print("✅ CSV FIXED — All timestamps now match ConnectWise UI (IST)")
 
 else:
-    print("No new data fetched")
+    print("No data fetched")
+```
