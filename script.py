@@ -1,3 +1,4 @@
+```python
 import requests
 import base64
 import pandas as pd
@@ -7,7 +8,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ================================
-# ENV VARIABLES (GitHub Secrets)
+# ENV VARIABLES
 # ================================
 cw_base_url = os.getenv("CW_BASE_URL")
 public_key = os.getenv("CW_PUBLIC_KEY")
@@ -28,7 +29,7 @@ headers = {
 }
 
 # ================================
-# SESSION WITH RETRY
+# SESSION
 # ================================
 def create_session():
     session = requests.Session()
@@ -38,21 +39,20 @@ def create_session():
     return session
 
 # ================================
-# LAST RUN LOGIC
+# LAST RUN
 # ================================
 def get_last_run_time():
     if os.path.exists("last_run.txt"):
         with open("last_run.txt", "r") as f:
             return f.read().strip(), False
-    else:
-        return None, True
+    return None, True
 
 def save_last_run_time():
     with open("last_run.txt", "w") as f:
         f.write(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
 
 # ================================
-# FETCH DATA
+# FETCH
 # ================================
 def fetch_tickets(last_run, is_first_run):
     session = create_session()
@@ -118,7 +118,7 @@ def fetch_tickets(last_run, is_first_run):
     return all_data
 
 # ================================
-# MAIN EXECUTION
+# MAIN
 # ================================
 last_run_time, is_first_run = get_last_run_time()
 
@@ -133,23 +133,28 @@ csv_path = "tickets.csv"
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # ❌ NO TIME CONVERSION — keep raw API values
+    # ✅ FORCE ALL COLUMNS AS STRING (prevents datetime corruption)
+    df = df.astype(str)
 
     # ================================
-    # MERGE + DEDUPE
+    # MERGE (SAFE — NO TYPE CHANGE)
     # ================================
     if os.path.exists(csv_path):
         try:
-            existing_df = pd.read_csv(csv_path)
+            existing_df = pd.read_csv(csv_path, dtype=str)  # 👈 IMPORTANT
             df = pd.concat([existing_df, df], ignore_index=True)
-            df.drop_duplicates(subset=["id"], inplace=True)
+
+            # Deduplicate by ID
+            df.drop_duplicates(subset=["id"], keep="last", inplace=True)
+
             print("Merged with existing CSV")
+
         except Exception as e:
             print(f"WARNING: Could not merge existing CSV: {e}")
             print("Proceeding with fresh data only")
 
     # ================================
-    # SAVE CSV
+    # SAVE
     # ================================
     try:
         df.to_csv(csv_path, index=False)
@@ -161,6 +166,4 @@ if tickets:
 
 else:
     print("No new data fetched")
-
-
-
+```
