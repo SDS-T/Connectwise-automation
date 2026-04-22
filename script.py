@@ -47,9 +47,28 @@ def get_last_run_time():
     else:
         return None, True
 
+
 def save_last_run_time():
     with open("last_run.txt", "w") as f:
         f.write(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+
+# ================================
+# NORMALIZE DATETIME COLUMN
+# ================================
+def normalize_date_column(df, column_name="_info.dateEntered"):
+    if column_name in df.columns:
+        df[column_name] = pd.to_datetime(
+            df[column_name],
+            utc=True,
+            errors="coerce"
+        )
+
+        # Save in consistent UTC ISO format
+        df[column_name] = df[column_name].dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return df
+
 
 # ================================
 # FETCH DATA
@@ -117,6 +136,7 @@ def fetch_tickets(last_run, is_first_run):
 
     return all_data
 
+
 # ================================
 # MAIN EXECUTION
 # ================================
@@ -133,7 +153,8 @@ csv_path = "tickets.csv"
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # ❌ NO TIME CONVERSION — keep raw API values
+    # ✅ Normalize new data timestamps
+    df = normalize_date_column(df)
 
     # ================================
     # MERGE + DEDUPE
@@ -141,9 +162,18 @@ if tickets:
     if os.path.exists(csv_path):
         try:
             existing_df = pd.read_csv(csv_path)
+
+            # ✅ Normalize old CSV timestamps
+            existing_df = normalize_date_column(existing_df)
+
+            # Merge
             df = pd.concat([existing_df, df], ignore_index=True)
+
+            # Drop duplicates
             df.drop_duplicates(subset=["id"], inplace=True)
+
             print("Merged with existing CSV")
+
         except Exception as e:
             print(f"WARNING: Could not merge existing CSV: {e}")
             print("Proceeding with fresh data only")
@@ -155,6 +185,7 @@ if tickets:
         df.to_csv(csv_path, index=False)
         print(f"✅ CSV updated successfully with {len(df)} total records")
         save_last_run_time()
+
     except Exception as e:
         print(f"❌ ERROR writing CSV: {e}")
         exit(1)
