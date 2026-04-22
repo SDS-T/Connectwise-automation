@@ -1,4 +1,3 @@
-```python
 import requests
 import base64
 import pandas as pd
@@ -100,7 +99,7 @@ def fetch_tickets():
 # ================================
 # MAIN
 # ================================
-print("🚀 Starting full refresh...")
+print(" Starting full refresh...")
 
 tickets = fetch_tickets()
 print("Total records fetched:", len(tickets))
@@ -110,7 +109,7 @@ csv_path = "tickets.csv"
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # ✅ Keep raw values EXACTLY as API (no datetime conversion)
+    # Keep raw values EXACTLY as API (no datetime conversion)
     df = df.astype(str)
 
     # ================================
@@ -118,16 +117,16 @@ if tickets:
     # ================================
     if os.path.exists(csv_path):
         os.remove(csv_path)
-        print("🗑️ Old CSV deleted")
+        print(" Old CSV deleted")
 
     # ================================
     # SAVE NEW FILE
     # ================================
     try:
         df.to_csv(csv_path, index=False)
-        print(f"✅ New CSV created with {len(df)} records")
+        print(f" New CSV created with {len(df)} records")
     except Exception as e:
-        print(f"❌ ERROR writing CSV: {e}")
+        print(f" ERROR writing CSV: {e}")
         exit(1)
 
 else:
