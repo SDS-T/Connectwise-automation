@@ -1,3 +1,4 @@
+```python
 import requests
 import base64
 import pandas as pd
@@ -38,22 +39,9 @@ def create_session():
     return session
 
 # ================================
-# LAST RUN
+# FETCH DATA (FULL LOAD ONLY)
 # ================================
-def get_last_run_time():
-    if os.path.exists("last_run.txt"):
-        with open("last_run.txt", "r") as f:
-            return f.read().strip(), False
-    return None, True
-
-def save_last_run_time():
-    with open("last_run.txt", "w") as f:
-        f.write(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-
-# ================================
-# FETCH
-# ================================
-def fetch_tickets(last_run, is_first_run):
+def fetch_tickets():
     session = create_session()
     all_data = []
     page = 1
@@ -82,18 +70,11 @@ def fetch_tickets(last_run, is_first_run):
     while True:
         print(f"\nFetching page {page}...")
 
-        if is_first_run:
-            endpoint = (
-                f"{cw_base_url}/service/tickets?"
-                f"conditions=(({board_filter}) AND ({owner_filter}))"
-                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
-            )
-        else:
-            endpoint = (
-                f"{cw_base_url}/service/tickets?"
-                f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered > '{last_run}')"
-                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
-            )
+        endpoint = (
+            f"{cw_base_url}/service/tickets?"
+            f"conditions=(({board_filter}) AND ({owner_filter}))"
+            f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
+        )
 
         response = session.get(endpoint, headers=headers)
 
@@ -119,12 +100,9 @@ def fetch_tickets(last_run, is_first_run):
 # ================================
 # MAIN
 # ================================
-last_run_time, is_first_run = get_last_run_time()
+print("🚀 Starting full refresh...")
 
-print("Last run:", last_run_time)
-print("First run:", is_first_run)
-
-tickets = fetch_tickets(last_run_time, is_first_run)
+tickets = fetch_tickets()
 print("Total records fetched:", len(tickets))
 
 csv_path = "tickets.csv"
@@ -132,37 +110,26 @@ csv_path = "tickets.csv"
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # ✅ FORCE ALL COLUMNS AS STRING (prevents datetime corruption)
+    # ✅ Keep raw values EXACTLY as API (no datetime conversion)
     df = df.astype(str)
 
     # ================================
-    # MERGE (SAFE — NO TYPE CHANGE)
+    # DELETE OLD FILE (FULL REFRESH)
     # ================================
     if os.path.exists(csv_path):
-        try:
-            existing_df = pd.read_csv(csv_path, dtype=str)  # 👈 IMPORTANT
-            df = pd.concat([existing_df, df], ignore_index=True)
-
-            # Deduplicate by ID
-            df.drop_duplicates(subset=["id"], keep="last", inplace=True)
-
-            print("Merged with existing CSV")
-
-        except Exception as e:
-            print(f"WARNING: Could not merge existing CSV: {e}")
-            print("Proceeding with fresh data only")
+        os.remove(csv_path)
+        print("🗑️ Old CSV deleted")
 
     # ================================
-    # SAVE
+    # SAVE NEW FILE
     # ================================
     try:
         df.to_csv(csv_path, index=False)
-        print(f"✅ CSV updated successfully with {len(df)} total records")
-        save_last_run_time()
+        print(f"✅ New CSV created with {len(df)} records")
     except Exception as e:
         print(f"❌ ERROR writing CSV: {e}")
         exit(1)
 
 else:
-    print("No new data fetched")
+    print("No data fetched")
 ```
