@@ -1,4 +1,3 @@
-```python
 import requests
 import base64
 import pandas as pd
@@ -8,7 +7,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ================================
-# ENV VARIABLES
+# ENV VARIABLES (GitHub Secrets)
 # ================================
 cw_base_url = os.getenv("CW_BASE_URL")
 public_key = os.getenv("CW_PUBLIC_KEY")
@@ -29,7 +28,7 @@ headers = {
 }
 
 # ================================
-# SESSION
+# SESSION WITH RETRY
 # ================================
 def create_session():
     session = requests.Session()
@@ -39,20 +38,21 @@ def create_session():
     return session
 
 # ================================
-# LAST RUN
+# LAST RUN LOGIC
 # ================================
 def get_last_run_time():
     if os.path.exists("last_run.txt"):
         with open("last_run.txt", "r") as f:
             return f.read().strip(), False
-    return None, True
+    else:
+        return None, True
 
 def save_last_run_time():
     with open("last_run.txt", "w") as f:
         f.write(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
 
 # ================================
-# FETCH
+# FETCH DATA
 # ================================
 def fetch_tickets(last_run, is_first_run):
     session = create_session()
@@ -60,23 +60,50 @@ def fetch_tickets(last_run, is_first_run):
     page = 1
     page_size = 1000
 
+    boards = [
+        "$ACS HelpDesk (MS)", "$ACS Implementation (MS)", "$ACS Implementation (PS)",
+        "$ACS Procurement", "$ACS Quotes", "$ACS Recurring (MS)", "$ACS Sales",
+        "$ACS Threat Detection", "$ACS Triage", "$Backup (MS)",
+        "$Inspiroz Helpdesk (MS)", "$Inspiroz Implementation (MS)", "$Inspiroz Implementation (PS)",
+        "$Inspiroz Procurement", "$Inspiroz Quotes", "$Inspiroz Recurring (MS)",
+        "$Inspiroz Sales", "$Inspiroz Threat Detection", "$Inspiroz Triage",
+        "$Internal", "$Re-Opened", "$RMM Alerts (MS)", "$TAM"
+    ]
+
+    owners = [
+        "Prashant Tayade", "Shivaji Gupta", "Siddhesh Tawde",
+        "Nagendra Rao", "Laxman Vengurlekar", "Devram Washivale",
+        "Vikas Bhadvalkar", "Vinith Devraj", "Shubham Mishra",
+        "Shreyash Ghadage", "Indra Singha", "Gaurav Dalvi"
+    ]
+
+    board_filter = " OR ".join([f"board/name='{b}'" for b in boards])
+    owner_filter = " OR ".join([f"owner/name='{o}'" for o in owners])
+
     while True:
+        print(f"\nFetching page {page}...")
+
         if is_first_run:
-            endpoint = f"{cw_base_url}/service/tickets?page={page}&pagesize={page_size}"
+            endpoint = (
+                f"{cw_base_url}/service/tickets?"
+                f"conditions=(({board_filter}) AND ({owner_filter}))"
+                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
+            )
         else:
             endpoint = (
                 f"{cw_base_url}/service/tickets?"
-                f"conditions=dateEntered > '{last_run}'"
-                f"&page={page}&pagesize={page_size}"
+                f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered > '{last_run}')"
+                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
             )
 
-        res = session.get(endpoint, headers=headers)
+        response = session.get(endpoint, headers=headers)
 
-        if res.status_code != 200:
-            print("API Error:", res.status_code, res.text)
+        if response.status_code != 200:
+            print(f"API Error {response.status_code}: {response.text}")
             break
 
-        data = res.json()
+        data = response.json()
+        print(f"Records fetched: {len(data)}")
 
         if not data:
             break
@@ -91,101 +118,49 @@ def fetch_tickets(last_run, is_first_run):
     return all_data
 
 # ================================
-# 🔥 STRICT DATETIME PARSER
-# ================================
-def strict_datetime_parser(series):
-    parsed_dates = []
-    failed_rows = []
-
-    for idx, val in series.items():
-        try:
-            raw = str(val).strip()
-
-            if raw == "" or raw.lower() == "nan":
-                parsed_dates.append("")
-                failed_rows.append((idx, raw, "EMPTY"))
-                continue
-
-            # ISO / UTC format
-            if "T" in raw or "+" in raw or "Z" in raw:
-                dt = pd.to_datetime(raw, utc=True, errors='coerce')
-
-                if pd.isna(dt):
-                    parsed_dates.append(raw)
-                    failed_rows.append((idx, raw, "ISO_PARSE_FAIL"))
-                    continue
-
-                dt = dt.tz_convert('Asia/Kolkata')
-                parsed_dates.append(dt.strftime('%m-%d-%Y %H:%M'))
-                continue
-
-            # MM-DD-YYYY HH:MM
-            try:
-                dt = pd.to_datetime(raw, format='%m-%d-%Y %H:%M', errors='raise')
-                dt = dt.tz_localize('Asia/Kolkata')
-                parsed_dates.append(dt.strftime('%m-%d-%Y %H:%M'))
-                continue
-            except:
-                pass
-
-            # Fallback
-            dt = pd.to_datetime(raw, errors='coerce')
-
-            if pd.isna(dt):
-                parsed_dates.append(raw)
-                failed_rows.append((idx, raw, "UNKNOWN_FORMAT"))
-                continue
-
-            dt = dt.tz_localize('UTC').tz_convert('Asia/Kolkata')
-            parsed_dates.append(dt.strftime('%m-%d-%Y %H:%M'))
-
-        except Exception as e:
-            parsed_dates.append(str(val))
-            failed_rows.append((idx, val, str(e)))
-
-    # Save debug file
-    if failed_rows:
-        debug_df = pd.DataFrame(failed_rows, columns=["index", "raw_value", "error"])
-        debug_df.to_csv("datetime_parse_errors.csv", index=False)
-        print(f"⚠️ {len(failed_rows)} rows had parsing issues (see datetime_parse_errors.csv)")
-
-    return pd.Series(parsed_dates)
-
-# ================================
-# MAIN
+# MAIN EXECUTION
 # ================================
 last_run_time, is_first_run = get_last_run_time()
 
+print("Last run:", last_run_time)
+print("First run:", is_first_run)
+
 tickets = fetch_tickets(last_run_time, is_first_run)
+print("Total records fetched:", len(tickets))
 
 csv_path = "tickets.csv"
 
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # Apply strict parser
-    if '_info.dateEntered' in df.columns:
-        df['_info.dateEntered'] = strict_datetime_parser(df['_info.dateEntered'])
+    # ❌ NO TIME CONVERSION — keep raw API values
 
-    # Merge existing CSV
+    # ================================
+    # MERGE + DEDUPE
+    # ================================
     if os.path.exists(csv_path):
         try:
             existing_df = pd.read_csv(csv_path)
-
-            if '_info.dateEntered' in existing_df.columns:
-                existing_df['_info.dateEntered'] = strict_datetime_parser(existing_df['_info.dateEntered'])
-
             df = pd.concat([existing_df, df], ignore_index=True)
-            df.drop_duplicates(subset=["id"], keep="last", inplace=True)
-
+            df.drop_duplicates(subset=["id"], inplace=True)
+            print("Merged with existing CSV")
         except Exception as e:
-            print("Merge warning:", e)
+            print(f"WARNING: Could not merge existing CSV: {e}")
+            print("Proceeding with fresh data only")
 
-    df.to_csv(csv_path, index=False)
-    save_last_run_time()
-
-    print("✅ SUCCESS: CSV updated with correct IST timestamps")
+    # ================================
+    # SAVE CSV
+    # ================================
+    try:
+        df.to_csv(csv_path, index=False)
+        print(f"✅ CSV updated successfully with {len(df)} total records")
+        save_last_run_time()
+    except Exception as e:
+        print(f"❌ ERROR writing CSV: {e}")
+        exit(1)
 
 else:
-    print("No data fetched")
-```
+    print("No new data fetched")
+
+
+
