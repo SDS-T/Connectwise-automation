@@ -92,7 +92,7 @@ def fetch_tickets(last_run, is_first_run):
         else:
             endpoint = (
                 f"{cw_base_url}/service/tickets?"
-                f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '{last_run}')"
+                f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '2026-01-01T00:00:00')"
                 f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
             )
 
@@ -133,34 +133,28 @@ csv_path = "tickets.csv"
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # ✅ Time conversion
+    # 🔍 DEBUG (optional but recommended)
+    print("Columns:", df.columns)
     if "_info.dateEntered" in df.columns:
-        df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
-        df["_info.dateEntered"] = df["_info.dateEntered"].dt.tz_convert("US/Eastern")
-        df["_info.dateEntered"] = df["_info.dateEntered"].dt.strftime("%m-%d-%Y %H:%M")
+        print("\nSample raw _info.dateEntered values:")
+        print(df["_info.dateEntered"].head(5))
 
-    # ✅ Append + dedupe (FIXED)
-    if os.path.exists(csv_path):
-        try:
-            existing_df = pd.read_csv(csv_path)
-            df = pd.concat([existing_df, df], ignore_index=True)
-            df.drop_duplicates(subset=["id"], inplace=True)
-            print("Merged with existing CSV")
-        except Exception as e:
-            print(f"WARNING: Could not merge existing CSV: {e}")
-            print("Proceeding with fresh data only")
-
-    # ✅ Safe CSV write (CRITICAL FIX)
+    # ✅ OVERWRITE CSV (no append, no dedupe)
     try:
         df.to_csv(csv_path, index=False)
-        print(f"✅ CSV updated successfully with {len(df)} total records")
-
-        # Save last run ONLY after success
-        save_last_run_time()
+        print(f"✅ CSV overwritten successfully with {len(df)} records")
 
     except Exception as e:
         print(f"❌ ERROR writing CSV: {e}")
         exit(1)
+
+else:
+    print("⚠️ No data fetched from API")
+
+    # ✅ STILL create empty file (important)
+    import pandas as pd
+    pd.DataFrame().to_csv(csv_path, index=False)
+    print("📝 Empty CSV created")
 
 else:
     print("No new data fetched")
