@@ -2,12 +2,12 @@ import requests
 import base64
 import pandas as pd
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ================================
-# ENV VARIABLES
+# ENV VARIABLES (GitHub Secrets)
 # ================================
 cw_base_url = os.getenv("CW_BASE_URL")
 public_key = os.getenv("CW_PUBLIC_KEY")
@@ -38,19 +38,23 @@ def create_session():
     return session
 
 # ================================
-# READ START DATE
+# LAST RUN LOGIC
 # ================================
-def get_start_date():
-    if os.path.exists("start_date.txt"):
-        with open("start_date.txt", "r") as f:
-            return f.read().strip()
+def get_last_run_time():
+    if os.path.exists("last_run.txt"):
+        with open("last_run.txt", "r") as f:
+            return f.read().strip(), False
     else:
-        return "2026-01-01T00:00:00"   # default fallback
+        return None, True   # First run
+
+def save_last_run_time():
+    with open("last_run.txt", "w") as f:
+        f.write(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
 
 # ================================
-# FETCH DATA (FULL LOAD)
+# FETCH DATA
 # ================================
-def fetch_tickets(start_date):
+def fetch_tickets(last_run, is_first_run):
     session = create_session()
     all_data = []
     page = 1
@@ -79,23 +83,27 @@ def fetch_tickets(start_date):
     while True:
         print(f"\nFetching page {page}...")
 
-        endpoint = (
-            f"{cw_base_url}/service/tickets?"
-            f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '{start_date}')"
-            f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
-        )
-
-        # 🔍 DEBUG (VERY IMPORTANT)
-        print("API URL:", endpoint)
+        if is_first_run:
+            endpoint = (
+                f"{cw_base_url}/service/tickets?"
+                f"conditions=(({board_filter}) AND ({owner_filter}))"
+                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
+            )
+        else:
+            endpoint = (
+                f"{cw_base_url}/service/tickets?"
+                f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '{last_run}')"
+                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
+            )
 
         response = session.get(endpoint, headers=headers)
 
         if response.status_code != 200:
-            print(f"❌ API Error {response.status_code}: {response.text}")
+            print(f"API Error {response.status_code}: {response.text}")
             break
 
         data = response.json()
-        print(f"Records fetched this page: {len(data)}")
+        print(f"Records fetched: {len(data)}")
 
         if not data:
             break
@@ -112,29 +120,47 @@ def fetch_tickets(start_date):
 # ================================
 # MAIN EXECUTION
 # ================================
-start_date = get_start_date()
-print("📅 Fetching data from:", start_date)
+last_run_time, is_first_run = get_last_run_time()
 
-tickets = fetch_tickets(start_date)
-print("📊 Total records fetched:", len(tickets))
+print("Last run:", last_run_time)
+print("First run:", is_first_run)
+
+tickets = fetch_tickets(last_run_time, is_first_run)
+print("Total records fetched:", len(tickets))
 
 csv_path = "tickets.csv"
 
-# ================================
-# ALWAYS CREATE FILE (even if empty)
-# ================================
-df = pd.json_normalize(tickets) if tickets else pd.DataFrame()
+if tickets:
+    df = pd.json_normalize(tickets)
 
-# Optional: clean datetime
-if not df.empty and "_info.dateEntered" in df.columns:
-    df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
+    # ✅ Time conversion
+    if "_info.dateEntered" in df.columns:
+        df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
+        df["_info.dateEntered"] = df["_info.dateEntered"].dt.tz_convert("US/Eastern")
+        df["_info.dateEntered"] = df["_info.dateEntered"].dt.strftime("%m-%d-%Y %H:%M")
 
-# ================================
-# WRITE CSV (OVERWRITE EVERY TIME)
-# ================================
-try:
-    print("📁 Saving CSV at:", os.path.abspath(csv_path))
-    df.to_csv(csv_path, index=False)
-    print(f"✅ CSV written successfully with {len(df)} records")
-except Exception as e:
-    print(f"❌ ERROR writing CSV: {e}")
+    # ✅ Append + dedupe (FIXED)
+    if os.path.exists(csv_path):
+        try:
+            existing_df = pd.read_csv(csv_path)
+            df = pd.concat([existing_df, df], ignore_index=True)
+            df.drop_duplicates(subset=["id"], inplace=True)
+            print("Merged with existing CSV")
+        except Exception as e:
+            print(f"WARNING: Could not merge existing CSV: {e}")
+            print("Proceeding with fresh data only")
+
+    # ✅ Safe CSV write (CRITICAL FIX)
+    try:
+        df.to_csv(csv_path, index=False)
+        print(f"✅ CSV updated successfully with {len(df)} total records")
+
+        # Save last run ONLY after success
+        save_last_run_time()
+
+    except Exception as e:
+        print(f"❌ ERROR writing CSV: {e}")
+        exit(1)
+
+else:
+    print("No new data fetched")
