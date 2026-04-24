@@ -2,7 +2,7 @@ import requests
 import base64
 import pandas as pd
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -45,8 +45,7 @@ def get_start_date():
         with open("start_date.txt", "r") as f:
             return f.read().strip()
     else:
-        # Default fallback
-        return "2026-01-01T00:00:00Z"
+        return "2026-01-01T00:00:00"   # default fallback
 
 # ================================
 # FETCH DATA (FULL LOAD)
@@ -86,14 +85,17 @@ def fetch_tickets(start_date):
             f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
         )
 
+        # 🔍 DEBUG (VERY IMPORTANT)
+        print("API URL:", endpoint)
+
         response = session.get(endpoint, headers=headers)
 
         if response.status_code != 200:
-            print(f"API Error {response.status_code}: {response.text}")
+            print(f"❌ API Error {response.status_code}: {response.text}")
             break
 
         data = response.json()
-        print(f"Records fetched: {len(data)}")
+        print(f"Records fetched this page: {len(data)}")
 
         if not data:
             break
@@ -111,27 +113,28 @@ def fetch_tickets(start_date):
 # MAIN EXECUTION
 # ================================
 start_date = get_start_date()
-print("Fetching data from:", start_date)
+print("📅 Fetching data from:", start_date)
 
 tickets = fetch_tickets(start_date)
-print("Total records fetched:", len(tickets))
+print("📊 Total records fetched:", len(tickets))
 
 csv_path = "tickets.csv"
 
-if tickets:
-    df = pd.json_normalize(tickets)
+# ================================
+# ALWAYS CREATE FILE (even if empty)
+# ================================
+df = pd.json_normalize(tickets) if tickets else pd.DataFrame()
 
-    # ✅ Convert dateEntered to UTC (keep consistent)
-    if "_info.dateEntered" in df.columns:
-        df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
+# Optional: clean datetime
+if not df.empty and "_info.dateEntered" in df.columns:
+    df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
 
-    # ❗ CRITICAL: overwrite file every time
-    try:
-        df.to_csv(csv_path, index=False)
-        print(f"✅ CSV overwritten successfully with {len(df)} records")
-    except Exception as e:
-        print(f"❌ ERROR writing CSV: {e}")
-        exit(1)
-
-else:
-    print("No data fetched")
+# ================================
+# WRITE CSV (OVERWRITE EVERY TIME)
+# ================================
+try:
+    print("📁 Saving CSV at:", os.path.abspath(csv_path))
+    df.to_csv(csv_path, index=False)
+    print(f"✅ CSV written successfully with {len(df)} records")
+except Exception as e:
+    print(f"❌ ERROR writing CSV: {e}")
