@@ -7,7 +7,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ================================
-# ENV VARIABLES (GitHub Secrets)
+# ENV VARIABLES
 # ================================
 cw_base_url = os.getenv("CW_BASE_URL")
 public_key = os.getenv("CW_PUBLIC_KEY")
@@ -38,23 +38,20 @@ def create_session():
     return session
 
 # ================================
-# LAST RUN LOGIC
+# READ START DATE
 # ================================
-def get_last_run_time():
-    if os.path.exists("last_run.txt"):
-        with open("last_run.txt", "r") as f:
-            return f.read().strip(), False
+def get_start_date():
+    if os.path.exists("start_date.txt"):
+        with open("start_date.txt", "r") as f:
+            return f.read().strip()
     else:
-        return None, True   # First run
-
-def save_last_run_time():
-    with open("last_run.txt", "w") as f:
-        f.write(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        # Default fallback
+        return "2026-01-01T00:00:00Z"
 
 # ================================
-# FETCH DATA
+# FETCH DATA (FULL LOAD)
 # ================================
-def fetch_tickets(last_run, is_first_run):
+def fetch_tickets(start_date):
     session = create_session()
     all_data = []
     page = 1
@@ -83,18 +80,11 @@ def fetch_tickets(last_run, is_first_run):
     while True:
         print(f"\nFetching page {page}...")
 
-        if is_first_run:
-            endpoint = (
-                f"{cw_base_url}/service/tickets?"
-                f"conditions=(({board_filter}) AND ({owner_filter}))"
-                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
-            )
-        else:
-            endpoint = (
-                f"{cw_base_url}/service/tickets?"
-                f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '{last_run}')"
-                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
-            )
+        endpoint = (
+            f"{cw_base_url}/service/tickets?"
+            f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '{start_date}')"
+            f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
+        )
 
         response = session.get(endpoint, headers=headers)
 
@@ -120,12 +110,10 @@ def fetch_tickets(last_run, is_first_run):
 # ================================
 # MAIN EXECUTION
 # ================================
-last_run_time, is_first_run = get_last_run_time()
+start_date = get_start_date()
+print("Fetching data from:", start_date)
 
-print("Last run:", last_run_time)
-print("First run:", is_first_run)
-
-tickets = fetch_tickets(last_run_time, is_first_run)
+tickets = fetch_tickets(start_date)
 print("Total records fetched:", len(tickets))
 
 csv_path = "tickets.csv"
@@ -133,30 +121,17 @@ csv_path = "tickets.csv"
 if tickets:
     df = pd.json_normalize(tickets)
 
-    # ✅ Append + dedupe (FIXED)
-    if os.path.exists(csv_path):
-        try:
-            existing_df = pd.read_csv(csv_path)
-            df = pd.concat([existing_df, df], ignore_index=True)
-            df.drop_duplicates(subset=["id"], inplace=True)
-            print("Merged with existing CSV")
-        except Exception as e:
-            print(f"WARNING: Could not merge existing CSV: {e}")
-            print("Proceeding with fresh data only")
+    # ✅ Convert dateEntered to UTC (keep consistent)
+    if "_info.dateEntered" in df.columns:
+        df["_info.dateEntered"] = pd.to_datetime(df["_info.dateEntered"], utc=True)
 
-    # ✅ Safe CSV write (CRITICAL FIX)
+    # ❗ CRITICAL: overwrite file every time
     try:
         df.to_csv(csv_path, index=False)
-        print(f"✅ CSV updated successfully with {len(df)} total records")
-
-        # Save last run ONLY after success
-        save_last_run_time()
-
+        print(f"✅ CSV overwritten successfully with {len(df)} records")
     except Exception as e:
         print(f"❌ ERROR writing CSV: {e}")
         exit(1)
 
 else:
-    print("No new data fetched")
-
-
+    print("No data fetched")
