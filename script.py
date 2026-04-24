@@ -2,12 +2,11 @@ import requests
 import base64
 import pandas as pd
 import os
-from datetime import datetime, timezone
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # ================================
-# ENV VARIABLES (GitHub Secrets)
+# ENV VARIABLES
 # ================================
 cw_base_url = os.getenv("CW_BASE_URL")
 public_key = os.getenv("CW_PUBLIC_KEY")
@@ -38,27 +37,15 @@ def create_session():
     return session
 
 # ================================
-# LAST RUN LOGIC
+# FETCH DATA (FULL LOAD)
 # ================================
-def get_last_run_time():
-    if os.path.exists("last_run.txt"):
-        with open("last_run.txt", "r") as f:
-            return f.read().strip(), False
-    else:
-        return None, True   # First run
-
-def save_last_run_time():
-    with open("last_run.txt", "w") as f:
-        f.write(datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
-
-# ================================
-# FETCH DATA
-# ================================
-def fetch_tickets(last_run, is_first_run):
+def fetch_tickets():
     session = create_session()
     all_data = []
     page = 1
     page_size = 1000
+
+    start_date = "2026-01-01T00:00:00"
 
     boards = [
         "$ACS HelpDesk (MS)", "$ACS Implementation (MS)", "$ACS Implementation (PS)",
@@ -83,27 +70,23 @@ def fetch_tickets(last_run, is_first_run):
     while True:
         print(f"\nFetching page {page}...")
 
-        if is_first_run:
-            endpoint = (
-                f"{cw_base_url}/service/tickets?"
-                f"conditions=(({board_filter}) AND ({owner_filter}))"
-                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
-            )
-        else:
-            endpoint = (
-                f"{cw_base_url}/service/tickets?"
-                f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '2026-01-01T00:00:00')"
-                f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
-            )
+        endpoint = (
+            f"{cw_base_url}/service/tickets?"
+            f"conditions=(({board_filter}) AND ({owner_filter}) AND dateEntered >= '{start_date}')"
+            f"&page={page}&pagesize={page_size}&orderBy=dateEntered asc"
+        )
+
+        # 🔍 DEBUG
+        print("API URL:", endpoint)
 
         response = session.get(endpoint, headers=headers)
 
         if response.status_code != 200:
-            print(f"API Error {response.status_code}: {response.text}")
+            print(f"❌ API Error {response.status_code}: {response.text}")
             break
 
         data = response.json()
-        print(f"Records fetched: {len(data)}")
+        print(f"Records fetched this page: {len(data)}")
 
         if not data:
             break
@@ -120,41 +103,31 @@ def fetch_tickets(last_run, is_first_run):
 # ================================
 # MAIN EXECUTION
 # ================================
-last_run_time, is_first_run = get_last_run_time()
+print("🚀 Starting full data fetch...")
 
-print("Last run:", last_run_time)
-print("First run:", is_first_run)
-
-tickets = fetch_tickets(last_run_time, is_first_run)
-print("Total records fetched:", len(tickets))
+tickets = fetch_tickets()
+print("📊 Total records fetched:", len(tickets))
 
 csv_path = "tickets.csv"
 
-if tickets:
-    df = pd.json_normalize(tickets)
+# ================================
+# CREATE DATAFRAME
+# ================================
+df = pd.json_normalize(tickets) if tickets else pd.DataFrame()
 
-    # 🔍 DEBUG (optional but recommended)
-    print("Columns:", df.columns)
-    if "_info.dateEntered" in df.columns:
-        print("\nSample raw _info.dateEntered values:")
-        print(df["_info.dateEntered"].head(5))
+# 🔍 DEBUG
+print("Columns:", df.columns)
 
-    # ✅ OVERWRITE CSV (no append, no dedupe)
-    try:
-        df.to_csv(csv_path, index=False)
-        print(f"✅ CSV overwritten successfully with {len(df)} records")
+if "_info.dateEntered" in df.columns:
+    print("\nSample raw _info.dateEntered values:")
+    print(df["_info.dateEntered"].head(5))
 
-    except Exception as e:
-        print(f"❌ ERROR writing CSV: {e}")
-        exit(1)
-
-else:
-    print("⚠️ No data fetched from API")
-
-    # ✅ STILL create empty file (important)
-    import pandas as pd
-    pd.DataFrame().to_csv(csv_path, index=False)
-    print("📝 Empty CSV created")
-
-else:
-    print("No new data fetched")
+# ================================
+# WRITE CSV (OVERWRITE ALWAYS)
+# ================================
+try:
+    print("📁 Saving CSV at:", os.path.abspath(csv_path))
+    df.to_csv(csv_path, index=False)
+    print(f"✅ CSV written successfully with {len(df)} records")
+except Exception as e:
+    print(f"❌ ERROR writing CSV: {e}")
